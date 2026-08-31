@@ -19,6 +19,9 @@ def on_startup():
     init_db()
 
 # Request bodies 
+class EditIn(BaseModel):
+    content: str
+
 class PostIn(BaseModel):
     sourceType: str
     sourceValue: str
@@ -107,6 +110,62 @@ def list_variants(post_id: int):
     rows = conn.execute("SELECT * FROM variants WHERE post_id = ?", (post_id,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+# Review workflow 
+@app.patch("/variants/{variant_id}/approve")
+def approve_variant(variant_id: int):
+    conn = get_conn()
+    variant = conn.execute("SELECT * FROM variants WHERE id = ?", (variant_id,)).fetchone()
+    if not variant:
+        conn.close()
+        raise HTTPException(404, "variant not found")
+    if variant["status"] == "published":
+        conn.close()
+        raise HTTPException(400, "cannot approve a variant that is already published")
+    conn.execute(
+        "UPDATE variants SET status='approved', updated_at=datetime('now') WHERE id=?", (variant_id,)
+    )
+    conn.commit()
+    updated = conn.execute("SELECT * FROM variants WHERE id = ?", (variant_id,)).fetchone()
+    conn.close()
+    return dict(updated)
+
+
+@app.patch("/variants/{variant_id}/reject")
+def reject_variant(variant_id: int):
+    conn = get_conn()
+    variant = conn.execute("SELECT * FROM variants WHERE id = ?", (variant_id,)).fetchone()
+    if not variant:
+        conn.close()
+        raise HTTPException(404, "variant not found")
+    conn.execute(
+        "UPDATE variants SET status='rejected', updated_at=datetime('now') WHERE id=?", (variant_id,)
+    )
+    conn.commit()
+    updated = conn.execute("SELECT * FROM variants WHERE id = ?", (variant_id,)).fetchone()
+    conn.close()
+    return dict(updated)
+
+
+@app.patch("/variants/{variant_id}/edit")
+def edit_variant(variant_id: int, payload: EditIn):
+    conn = get_conn()
+    variant = conn.execute("SELECT * FROM variants WHERE id = ?", (variant_id,)).fetchone()
+    if not variant:
+        conn.close()
+        raise HTTPException(404, "variant not found")
+    check = validate_variant(variant["platform"], payload.content)
+    if not check["ok"]:
+        conn.close()
+        raise HTTPException(400, check["reason"])
+    conn.execute(
+        "UPDATE variants SET content=?, updated_at=datetime('now') WHERE id=?",
+        (payload.content, variant_id),
+    )
+    conn.commit()
+    updated = conn.execute("SELECT * FROM variants WHERE id = ?", (variant_id,)).fetchone()
+    conn.close()
+    return dict(updated)
 
 @app.get("/constraints")
 def constraints():
