@@ -10,10 +10,8 @@ PROFILES = {
 
 HASHTAG_RE = re.compile(r"#[A-Za-z0-9_]+")
 
-
 def count_hashtags(text: str) -> int:
     return len(HASHTAG_RE.findall(text))
-
 
 def validate_variant(platform: str, text: str) -> dict:
     """
