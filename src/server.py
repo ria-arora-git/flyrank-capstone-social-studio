@@ -1,12 +1,10 @@
 import os
-
+from .scheduler import start_worker, idempotency_key
 from dotenv import load_dotenv
 load_dotenv()
-
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
-
 from .db import get_conn, init_db
 from .generator import generate_variant
 from .constraints import validate_variant, PROFILES
@@ -17,6 +15,8 @@ app = FastAPI(title="Social Media Studio")
 @app.on_event("startup")
 def on_startup():
     init_db()
+    interval = float(os.environ.get("WORKER_INTERVAL_SECONDS", "5"))
+    start_worker(interval)
 
 # Request bodies 
 class EditIn(BaseModel):
@@ -29,6 +29,9 @@ class PostIn(BaseModel):
 
 class GenerateIn(BaseModel):
     platforms: Optional[List[str]] = None
+
+class ScheduleIn(BaseModel):
+    scheduledAt: str
 
 # Post ingestion 
 @app.post("/posts", status_code=201)
@@ -130,7 +133,6 @@ def approve_variant(variant_id: int):
     conn.close()
     return dict(updated)
 
-
 @app.patch("/variants/{variant_id}/reject")
 def reject_variant(variant_id: int):
     conn = get_conn()
@@ -145,7 +147,6 @@ def reject_variant(variant_id: int):
     updated = conn.execute("SELECT * FROM variants WHERE id = ?", (variant_id,)).fetchone()
     conn.close()
     return dict(updated)
-
 
 @app.patch("/variants/{variant_id}/edit")
 def edit_variant(variant_id: int, payload: EditIn):
@@ -166,6 +167,47 @@ def edit_variant(variant_id: int, payload: EditIn):
     updated = conn.execute("SELECT * FROM variants WHERE id = ?", (variant_id,)).fetchone()
     conn.close()
     return dict(updated)
+
+@app.post("/variants/{variant_id}/schedule", status_code=201)
+def schedule_variant(variant_id: int, payload: ScheduleIn):
+    conn = get_conn()
+    variant = conn.execute("SELECT * FROM variants WHERE id = ?", (variant_id,)).fetchone()
+    if not variant:
+        conn.close()
+        raise HTTPException(404, "variant not found")
+
+    if variant["status"] != "approved":
+        conn.close()
+        raise HTTPException(
+            409,
+            f'variant {variant_id} is "{variant["status"]}", not "approved" '
+            f'— only approved variants can be scheduled',
+        )
+
+    cur = conn.execute(
+        "INSERT INTO slots (variant_id, scheduled_at) VALUES (?, ?)",
+        (variant_id, payload.scheduledAt),
+    )
+    conn.commit()
+    slot = conn.execute("SELECT * FROM slots WHERE id = ?", (cur.lastrowid,)).fetchone()
+    conn.close()
+    return {"slot": dict(slot), "idempotencyKey": idempotency_key(variant_id, slot["id"])}
+
+# Publish history
+@app.get("/history")
+def history():
+    conn = get_conn()
+    rows = conn.execute(
+        """
+        SELECT pa.id, pa.idempotency_key, pa.platform, pa.status, pa.result,
+               pa.created_at, pa.updated_at, variants.content, variants.id AS variant_id
+        FROM publish_attempts pa
+        JOIN variants ON variants.id = pa.variant_id
+        ORDER BY pa.created_at DESC
+        """
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 @app.get("/constraints")
 def constraints():
