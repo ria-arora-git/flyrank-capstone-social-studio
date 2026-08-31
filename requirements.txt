@@ -3,3 +3,4 @@ fastapi
 requests 
 python-dotenv 
 beautifulsoup4
+httpx2
