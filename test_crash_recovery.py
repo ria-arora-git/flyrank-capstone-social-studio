@@ -8,7 +8,6 @@ sys.path.insert(0, os.path.dirname(__file__))
 from src.db import get_conn, init_db
 from src import scheduler
 
-
 def main():
     init_db()
     conn = get_conn()
@@ -35,7 +34,6 @@ def main():
     mock_posts = conn.execute("SELECT * FROM mock_x_posts").fetchall()
     print("mock_x_posts count :", len(mock_posts))
     conn.close()
-
 
 if __name__ == "__main__":
     main()
